@@ -339,6 +339,36 @@ os.makedirs(models_dir, exist_ok=True)
 
 print(f"[INFO] Models directory: {models_dir}")
 
+
+import stable_audio_tools.models.conditioners as _conditioners
+import transformers
+
+_original_t5gemma_init = _conditioners.T5GemmaConditioner.__init__
+
+def _patched_t5gemma_init(self, *args, **kwargs):
+    """
+    Intercept making T5GemmaConditioner and replacing repo_id
+    with t5gemma-b-b-ul2 local path
+    """
+    # if repo_id from gated repo — changing to local path
+    if "repo_id" in kwargs and kwargs["repo_id"] == "stabilityai/stable-audio-3-medium":
+        local_path = os.path.join(models_dir, "t5gemma-b-b-ul2")
+        if os.path.exists(local_path):
+            print(f"[PATCH] Redirecting T5GemmaConditioner from '{kwargs['repo_id']}' to local: {local_path}")
+            kwargs["repo_id"] = local_path
+            kwargs["local_files_only"] = True
+        else:
+            print(f"[WARN] Local t5gemma not found at {local_path}, will try HF download...")
+    
+    # also check subfolder — if present, removing it
+    if "subfolder" in kwargs:
+        del kwargs["subfolder"]
+    
+    return _original_t5gemma_init(self, *args, **kwargs)
+
+_conditioners.T5GemmaConditioner.__init__ = _patched_t5gemma_init
+
+
 # HuggingFace repo mapping: local_folder_name -> repo_id
 HF_REPOS = {
     "stable-audio-3-medium": "LeeAeron/stable-audio-3-medium",
