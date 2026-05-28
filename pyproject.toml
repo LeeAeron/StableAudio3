@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stable-audio-tools"
+version = "0.0.30"
+description = "Stable Audio 3 Portable webUI interface"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Stability AI, LeeAeron"},
+]
+
+dependencies = [
+    "alias-free-torch",
+    "dill",
+    "einops",
+    "einops-exts",
+    "huggingface_hub",
+    "importlib-resources",
+    "torchsde",
+    "nnAudio",
+    "numpy",
+    "PyWavelets",
+    "safetensors",
+    "scipy",
+    "sentencepiece",
+    "soxr",
+    "torch==2.10.0",
+    "torchaudio==2.10.0",
+    "tqdm",
+    "transformers",
+    "v-diffusion-pytorch",
+    "vector-quantize-pytorch",
+    "setuptools<81",
+    "gradio==6.9.0",
+    "accelerate",
+    "librosa",
+    "matplotlib",
+    "flash-attn @ https://huggingface.co/datasets/LeeAeron/Wan2GP/resolve/main/flash_attn-2.8.3+cu130torch2.10-cp311-cp311-win_amd64.whl",
+    "soundfile",
+    "Pillow",
+    "pytorch_lightning",
+]
+
+[tool.setuptools.packages.find]
+include = ["stable_audio_tools*"]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
+  { index = "pytorch-cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[tool.hatch.build.targets.sdist]
+include = ["stable_audio_tools"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["stable_audio_tools"]
