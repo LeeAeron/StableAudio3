@@ -52,6 +52,7 @@ This project provided with only *.bat installer/re-installer/starter/updater fil
 - output audio settings: samplerate, bitrate (for lossy formats) or qualilty (for ogg/opus formats)
 - normalization with dB level setting
 - auto-detecting GPU and enabling or disabling FlashAttention acceleration
+- auto-saving settings into local folder for future using
 
 
 ## 📺 Credits
