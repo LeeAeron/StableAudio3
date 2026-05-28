@@ -12,9 +12,9 @@ Stable Audio 3 is the next generation of Stable Audio: a focused, streamlined pl
 
 | Model | Model ID | Autoencoder | Hardware | Params | Max length | Use case |
 |---|---|---|---|---|---|---|
-| [**Stable Audio 3 Small-Music**](https://huggingface.co/LeeAeron/stable-audio-3-small-music) | `small-music` | SAME-Small | CPU | 433M | 120s | Lightweight music-only inference, no GPU required |
-| [**Stable Audio 3 Small-SFX**](https://huggingface.co/LeeAeron/stable-audio-3-small-sfx) | `small-sfx` | SAME-Small | CPU | 433M | 120s | Lightweight sound effects-only inference, no GPU required |
-| [**Stable Audio 3 Medium**](https://huggingface.co/LeeAeron/stable-audio-3-medium) | `medium` | SAME-Large | GPU (CUDA) | 1.4B | 380s | High Quality, Fast Inference |
+| [**Stable Audio 3 Small-Music**](https://huggingface.co/LeeAeron/stable-audio-3-small-music) | `small-music` | SAME-Small | CPU | 433M | 110s | Lightweight music-only inference, no GPU required |
+| [**Stable Audio 3 Small-SFX**](https://huggingface.co/LeeAeron/stable-audio-3-small-sfx) | `small-sfx` | SAME-Small | CPU | 433M | 110s | Lightweight sound effects-only inference, no GPU required |
+| [**Stable Audio 3 Medium**](https://huggingface.co/LeeAeron/stable-audio-3-medium) | `medium` | SAME-Large | GPU (CUDA) | 1.4B | 349s | High Quality, Fast Inference |
 
 
 ## 🔧 Key Differences from Official StableAudio3
