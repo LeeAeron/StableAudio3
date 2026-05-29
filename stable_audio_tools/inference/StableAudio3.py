@@ -254,7 +254,7 @@ if OPTIMAL["device"] == "cuda":
     cc_major = OPTIMAL["compute_capability"][0]
 
     # TF32: Ampere+ only (SM >= 8.0)
-    supports_tf32 = cc_major >= 8
+    supports_tf32 = cc_major >= 7
     torch.backends.cuda.matmul.allow_tf32 = supports_tf32
     torch.backends.cudnn.allow_tf32 = supports_tf32
     if supports_tf32:
@@ -267,7 +267,7 @@ if OPTIMAL["device"] == "cuda":
     torch.backends.cudnn.deterministic = False
 
     # Turing (SM 7.x, e.g., RTX 20xx, GTX 16xx) — FP32 accumulation for FP16 matmul
-    if cc_major == 7:
+    if cc_major == 6:
         torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
         print("[INFO] FP16 reduced-precision reduction disabled (Turing GPU)")
 
@@ -277,6 +277,28 @@ if OPTIMAL["device"] == "cuda":
         # and whether PyTorch was actually built with flash attention support.
         flash_available = torch.backends.cuda.is_flash_attention_available()
         supports_flash = cc_major >= 8 and flash_available
+
+        # External flash attn fallback
+        try:
+            from flash_attn import flash_attn_func
+
+            # GPU suppots FlashAttention, but PyTorch not enabling Flash-SDP
+            if cc_major >= 8 and not flash_available:
+                print("[PATCH] PyTorch Flash-SDP unavailable → enabling external flash_attn")
+
+                import torch.nn.functional as F
+
+                def flash_forward(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False):
+                    # external flash_attn not used mask/causal directly
+                    return flash_attn_func(q, k, v, dropout_p=dropout_p)
+
+                # global patch SDPA → flash_attn
+                F.scaled_dot_product_attention = flash_forward
+
+                print("[PATCH] scaled_dot_product_attention → flash_attn_func")
+
+        except Exception as e:
+            print(f"[PATCH] External flash_attn unavailable: {e}")
 
         # Memory-efficient attention works on SM50+ (Maxwell+), so always safe to enable
         torch.backends.cuda.enable_mem_efficient_sdp(True)
@@ -294,8 +316,8 @@ if OPTIMAL["device"] == "cuda":
             if cc_major < 8:
                 reason.append(f"CC {cc_major}.x < 8.0")
             if not flash_available:
-                reason.append("PyTorch build lacks flash attention")
-            print(f"[INFO] Flash Attention (SDPA) disabled ({', '.join(reason)})")
+                pass
+            print(f"[INFO] Flash Attention disabled ({', '.join(reason)})")
             print("[INFO] Falling back to memory-efficient + math SDPA backends")
 
     except AttributeError:
@@ -614,6 +636,13 @@ def move_model_to_device(model, target_device, dtype):
     reserved = torch.cuda.memory_reserved(0) / (1024**3)
     print(f"[INFO] VRAM after load: allocated={allocated:.2f}GB, reserved={reserved:.2f}GB")
 
+    # channels_last: speeds up conv layers ~10-15% on Tensor Core GPUs
+    try:
+        model = model.to(memory_format=torch.channels_last)
+        print("[INFO] channels_last memory format applied")
+    except Exception as e:
+        print(f"[WARN] channels_last failed, skipping: {e}")
+
     return model
 
 
@@ -693,6 +722,32 @@ def load_variant(variant_key: str) -> LoadedVariant:
     )
     _current_loaded = lv
     _current_key = variant_key
+
+    # torch.compile: 20-40% speedup on Ampere+ (RTX 30xx/40xx), warms up on first generation
+    if OPTIMAL["device"] == "cuda" and OPTIMAL["compute_capability"][0] >= 7:
+        print("[INFO] Compiling model with torch.compile...")
+        try:
+            lv.model = torch.compile(
+                lv.model,
+                mode="reduce-overhead",
+                fullgraph=False,
+                dynamic=True,
+            )
+            print("[INFO] torch.compile OK (first generation will be slower — JIT warmup)")
+        except Exception as e:
+            print(f"[WARN] torch.compile failed, skipping: {e}")
+
+    # CUDA warm-up: pre-heats CUDA kernels so the first real generation is faster
+    if OPTIMAL["device"] == "cuda" and OPTIMAL["compute_capability"][0] >= 7:
+        print("[INFO] CUDA warm-up...")
+        try:
+            with torch.no_grad():
+                dummy = torch.zeros(1, 64, 256, device=device, dtype=OPTIMAL["dtype"])
+                _ = dummy + dummy
+            torch.cuda.synchronize()
+            print("[INFO] CUDA warm-up done")
+        except Exception:
+            pass
 
     print(
         f"[startup] {v.key} ready in {time.time() - t0:.1f}s * "
@@ -887,6 +942,8 @@ def _tensor_to_audio(
     ogg_quality: int = 5,
     normalize: bool = False,
     normalize_level_db: float = -15.0,
+    variant_key: str = "",
+    seed: int = 0,
 ) -> Tuple[str, torch.Tensor]:
     """Pack a (B, C, N) generation tensor to audio, optionally cut to duration,
     export via FFmpeg with format/resample/normalization, and return (path, int16-tensor).
@@ -909,8 +966,9 @@ def _tensor_to_audio(
         out_dir = os.path.join(LAUNCHER_DIR, "outputs")
     os.makedirs(out_dir, exist_ok=True)
 
-    now = time.strftime("%Y%m%d_%H%M%S")
-    base_name = f"sa3_{now}"
+    now = time.strftime("%Y_%m_%d")
+    model_tag = variant_key.replace("-", "_") if variant_key else "unknown"
+    base_name = f"sa3_{now}_{model_tag}_{seed}"
 
     # Convert to numpy for FFmpeg
     audio_np = output.numpy().T  # (N, C) or (N,)
@@ -1069,14 +1127,15 @@ def _run_inference(
     autocast_enabled = OPTIMAL["use_autocast"]
     autocast_dtype = OPTIMAL["amp_dtype"]
 
-    with torch.autocast(device_type=device.type, dtype=autocast_dtype, enabled=autocast_enabled):
-        output = generate_diffusion_cond_inpaint(lv.model, **gen_kwargs)
+    with torch.no_grad():
+        with torch.autocast(device_type=device.type, dtype=autocast_dtype, enabled=autocast_enabled):
+            output = generate_diffusion_cond_inpaint(lv.model, **gen_kwargs)
 
     print(f"[infer/{variant_key}] sampling done in {time.time() - t0:.1f}s", flush=True)
 
     progress(0.92, desc="Normalising & saving")
     cut_dur = int(duration) if cut_to_seconds_total else None
-    out_path, int16_audio = _tensor_to_audio(output, lv.sample_rate, cut_dur, fmt=fmt, target_sr=target_sr, bitrate=bitrate, ogg_quality=ogg_quality, normalize=normalize, normalize_level_db=normalize_level_db)
+    out_path, int16_audio = _tensor_to_audio(output, lv.sample_rate, cut_dur, fmt=fmt, target_sr=target_sr, bitrate=bitrate, ogg_quality=ogg_quality, normalize=normalize, normalize_level_db=normalize_level_db, variant_key=variant_key, seed=seed_val)
 
     if not return_spectrogram:
         return out_path
